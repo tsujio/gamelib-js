@@ -4,6 +4,8 @@
 
 const play = async ({ url, logging, debug, playerId }) => {
   const canvas = document.createElement("canvas");
+  canvas.style.width = "100%";
+  canvas.style.height = "100%";
   canvas.style.touchAction = "none";
   document.body.appendChild(canvas);
   const offscreen = canvas.transferControlToOffscreen();
@@ -326,8 +328,12 @@ const audioManager = {
     this.audioBuffers = Object.fromEntries(bufs);
   },
 
-  play({ key, loop }) {
+  async play({ key, loop }) {
     if (key in this.audioBuffers) {
+      if (this.audioCtx.state === "suspended") {
+        await this.audioCtx.resume();
+      }
+
       const source = this.audioCtx.createBufferSource();
       source.buffer = this.audioBuffers[key];
       if (loop) {
@@ -735,7 +741,6 @@ function Game({ title, screen, GamePlay, drawMode }) {
 
   this.draw = function (canvas) {
     const ctx = canvas.getContext("2d");
-    ctx.clearRect(0, 0, screen.width, screen.height);
 
     switch (this.mode) {
       case MODE_TITLE:
