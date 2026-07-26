@@ -31,7 +31,7 @@ const play = async ({ url, logging, debug, playerId }) => {
       audioManager.play({ key: "__dummy__" });
       firstPointerDown = false
     }
-
+audioManager.x.push(["pointerdown", audioManager.audioCtx.currentTime])
     touches[e.pointerId] = {};
     worker.postMessage({
       type: "pointerdown",
@@ -46,6 +46,7 @@ const play = async ({ url, logging, debug, playerId }) => {
         type: "pointermove",
         pointerId: e.pointerId,
         ...toCanvasCoords(e),
+        a: audioManager.x,
       });
     }
   });
@@ -214,7 +215,7 @@ function Touch(id, x, y) {
     return this.endedTicks === null;
   };
 }
-
+let xx = []
 const touchManager = {
   touches: new Map(),
 
@@ -222,11 +223,12 @@ const touchManager = {
     this.touches.set(pointerId, new Touch(pointerId, x, y));
   },
 
-  onPointerMove({ pointerId, x, y }) {
+  onPointerMove({ pointerId, x, y, a }) {
     if (this.touches.has(pointerId)) {
       const touch = this.touches.get(pointerId);
       touch.x = x;
       touch.y = y;
+      xx = a
     }
   },
 
@@ -344,6 +346,7 @@ const loadAudio = async (audios) => {
 };
 
 const audioManager = {
+x:[],
   audioCtx: null,
   audioBuffers: {},
   loopingSource: null,
@@ -369,9 +372,11 @@ const audioManager = {
 
   async play({ key, loop }) {
     if (key in this.audioBuffers) {
+this.x.push(["play: "+key, this.audioCtx.currentTime])
       if (this.audioCtx?.state === "suspended") {
         await this.audioCtx.resume();
       }
+this.x.push(["playafter: "+key, this.audioCtx.currentTime])
 
       const source = this.audioCtx.createBufferSource();
       source.buffer = this.audioBuffers[key];
@@ -803,6 +808,7 @@ function Game({ title, screen, GamePlay, drawMode }) {
         break;
     }
 
+xx.forEach(([t, s], i) => { drawText(ctx, {text: `${s} ${t}`, x: 10, y: 20+10*i, size: 12, color: "red"}) })
     if (this.debug) {
       drawTps(ctx, { color: "white" });
     }
