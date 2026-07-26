@@ -62,8 +62,10 @@ const play = async ({ url, logging, debug, playerId }) => {
       case "ready":
         const { screen } = e.data;
         const resize = () => {
-          if (window.innerHeight / window.innerWidth < screen.height / screen.width) {
-            canvas.style.width = (window.innerHeight / screen.height) * screen.width + "px";
+          const windowWidth = window.visualViewport?.width ?? window.innerWidth;
+          const windowHeight = window.visualViewport?.height ?? window.innerHeight;
+          if (windowHeight / windowWidth < screen.height / screen.width) {
+            canvas.style.width = (windowHeight / screen.height) * screen.width + "px";
           } else {
             canvas.style.width = "100%";
           }
