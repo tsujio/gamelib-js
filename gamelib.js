@@ -23,8 +23,14 @@ const play = async ({ url, logging, debug, playerId }) => {
     return { x, y };
   };
 
+  let firstPointerDown = true
+
   window.addEventListener("pointerdown", (e) => {
-    audioManager.resumeAudioContext();
+    if (firstPointerDown) {
+      audioManager.resumeAudioContext();
+      audioManager.play({ key: "__dummy__" });
+      firstPointerDown = false
+    }
 
     touches[e.pointerId] = {};
     worker.postMessage({
@@ -351,6 +357,8 @@ const audioManager = {
     });
     const bufs = await Promise.all(promises);
     this.audioBuffers = Object.fromEntries(bufs);
+
+    this.audioBuffers["__dummy__"] = this.audioCtx.createBuffer(1, 1, 22050);
   },
 
   async resumeAudioContext() {
