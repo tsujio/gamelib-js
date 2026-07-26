@@ -27,6 +27,7 @@ const play = async ({ url, logging, debug, playerId }) => {
 
   window.addEventListener("pointerdown", (e) => {
     if (firstPointerDown) {
+      audioManager.audioCtx = new window.AudioContext();
       audioManager.resumeAudioContext();
       audioManager.play({ key: "__dummy__" });
       firstPointerDown = false
