@@ -57,19 +57,18 @@ const play = async ({ url, logging, debug, playerId }) => {
   window.addEventListener("pointerup", onpointerup);
   window.addEventListener("pointercancel", onpointerup);
 
-  const resize = () => {
-    if (window.innerHeight / window.innerWidth < canvas.height / canvas.width) {
-      canvas.style.width = (window.innerHeight / canvas.height) * canvas.width + "px";
-    } else {
-      canvas.style.width = "100%";
-    }
-  };
-
-  window.addEventListener("resize", resize);
-
   worker.onmessage = (e) => {
     switch (e.data.type) {
       case "ready":
+        const { screen } = e.data;
+        const resize = () => {
+          if (window.innerHeight / window.innerWidth < screen.height / screen.width) {
+            canvas.style.width = (window.innerHeight / screen.height) * screen.width + "px";
+          } else {
+            canvas.style.width = "100%";
+          }
+        };
+        window.addEventListener("resize", resize);
         resize();
 
         worker.postMessage(
@@ -148,7 +147,7 @@ const register = ({ game, audios, font, image, key }) => {
     requestAnimationFrame(loop);
   };
 
-  self.postMessage({ type: "ready" });
+  self.postMessage({ type: "ready", screen: game.screen });
 };
 
 //////////////////////////////////////////////////////////////////////////////
