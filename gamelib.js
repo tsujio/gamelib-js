@@ -5,7 +5,6 @@
 const play = async ({ url, logging, debug, playerId }) => {
   const canvas = document.createElement("canvas");
   canvas.style.width = "100%";
-  canvas.style.height = "100%";
   canvas.style.touchAction = "none";
   document.body.appendChild(canvas);
   const offscreen = canvas.transferControlToOffscreen();
@@ -15,25 +14,32 @@ const play = async ({ url, logging, debug, playerId }) => {
 
   const touches = {};
 
-  canvas.addEventListener("pointerdown", (e) => {
+  const toCanvasCoords = ({ clientX, clientY }) => {
+    const rect = canvas.getBoundingClientRect();
+    const cssX = clientX - rect.left;
+    const cssY = clientY - rect.top;
+    const x = cssX * (canvas.width / rect.width);
+    const y = cssY * (canvas.height / rect.height);
+    return { x, y };
+  };
+
+  window.addEventListener("pointerdown", (e) => {
     audioManager.resumeAudioContext();
 
     touches[e.pointerId] = {};
     worker.postMessage({
       type: "pointerdown",
       pointerId: e.pointerId,
-      offsetX: e.offsetX,
-      offsetY: e.offsetY,
+      ...toCanvasCoords(e),
     });
   });
 
-  canvas.addEventListener("pointermove", (e) => {
+  window.addEventListener("pointermove", (e) => {
     if (touches[e.pointerId]) {
       worker.postMessage({
         type: "pointermove",
         pointerId: e.pointerId,
-        offsetX: e.offsetX,
-        offsetY: e.offsetY,
+        ...toCanvasCoords(e),
       });
     }
   });
@@ -51,9 +57,21 @@ const play = async ({ url, logging, debug, playerId }) => {
   window.addEventListener("pointerup", onpointerup);
   window.addEventListener("pointercancel", onpointerup);
 
+  const resize = () => {
+    if (window.innerHeight / window.innerWidth < canvas.height / canvas.width) {
+      canvas.style.width = (window.innerHeight / canvas.height) * canvas.width + "px";
+    } else {
+      canvas.style.width = "100%";
+    }
+  };
+
+  window.addEventListener("resize", resize);
+
   worker.onmessage = (e) => {
     switch (e.data.type) {
       case "ready":
+        resize();
+
         worker.postMessage(
           {
             type: "play",
@@ -193,15 +211,15 @@ function Touch(id, x, y) {
 const touchManager = {
   touches: new Map(),
 
-  onPointerDown({ pointerId, offsetX, offsetY }) {
-    this.touches.set(pointerId, new Touch(pointerId, offsetX, offsetY));
+  onPointerDown({ pointerId, x, y }) {
+    this.touches.set(pointerId, new Touch(pointerId, x, y));
   },
 
-  onPointerMove({ pointerId, offsetX, offsetY }) {
+  onPointerMove({ pointerId, x, y }) {
     if (this.touches.has(pointerId)) {
       const touch = this.touches.get(pointerId);
-      touch.x = offsetX;
-      touch.y = offsetY;
+      touch.x = x;
+      touch.y = y;
     }
   },
 
@@ -340,8 +358,12 @@ const audioManager = {
     }
   },
 
-  play({ key, loop }) {
+  async play({ key, loop }) {
     if (key in this.audioBuffers) {
+      if (this.audioCtx?.state === "suspended") {
+        await this.audioCtx.resume();
+      }
+
       const source = this.audioCtx.createBufferSource();
       source.buffer = this.audioBuffers[key];
       if (loop) {
