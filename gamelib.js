@@ -380,7 +380,7 @@ const audioManager = {
         this.loopingSource = source;
       }
       source.connect(this.audioCtx.destination);
-      source.start(0);
+      source.start(this.audioCtx.currentTime + 0.02);
     }
   },
 
