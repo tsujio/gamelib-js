@@ -10,11 +10,14 @@ const play = async ({ url, logging, debug, playerId }) => {
   document.body.appendChild(canvas);
   const offscreen = canvas.transferControlToOffscreen();
 
-  const worker = new Worker(url, { type: "module" });
+  const workerUrl = "./playjs-worker.js?url=" + window.encodeURIComponent(url);
+  const worker = new Worker(workerUrl, { type: "module" });
 
   const touches = {};
 
   canvas.addEventListener("pointerdown", (e) => {
+    audioManager.resumeAudioContext();
+
     touches[e.pointerId] = {};
     worker.postMessage({
       type: "pointerdown",
@@ -50,6 +53,18 @@ const play = async ({ url, logging, debug, playerId }) => {
 
   worker.onmessage = (e) => {
     switch (e.data.type) {
+      case "ready":
+        worker.postMessage(
+          {
+            type: "play",
+            canvas: offscreen,
+            logging,
+            debug,
+            playerId,
+          },
+          [offscreen],
+        );
+        break;
       case "loadAudio":
         audioManager.register(e.data);
         break;
@@ -65,17 +80,6 @@ const play = async ({ url, logging, debug, playerId }) => {
   worker.onerror = (e) => {
     console.error("Error on worker", e);
   };
-
-  worker.postMessage(
-    {
-      type: "play",
-      canvas: offscreen,
-      logging,
-      debug,
-      playerId,
-    },
-    [offscreen],
-  );
 };
 
 //////////////////////////////////////////////////////////////////////////////
@@ -125,6 +129,8 @@ const register = ({ game, audios, font, image, key }) => {
 
     requestAnimationFrame(loop);
   };
+
+  self.postMessage({ type: "ready" });
 };
 
 //////////////////////////////////////////////////////////////////////////////
@@ -328,12 +334,14 @@ const audioManager = {
     this.audioBuffers = Object.fromEntries(bufs);
   },
 
-  async play({ key, loop }) {
-    if (key in this.audioBuffers) {
-      if (this.audioCtx.state === "suspended") {
-        await this.audioCtx.resume();
-      }
+  async resumeAudioContext() {
+    if (this.audioCtx?.state === "suspended") {
+      await this.audioCtx.resume();
+    }
+  },
 
+  play({ key, loop }) {
+    if (key in this.audioBuffers) {
       const source = this.audioCtx.createBufferSource();
       source.buffer = this.audioBuffers[key];
       if (loop) {
