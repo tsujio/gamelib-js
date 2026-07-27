@@ -375,7 +375,7 @@ x:[],
     if (key in this.audioBuffers) {
 this.x.push(["play: "+key, this.audioCtx.currentTime])
       if (this.audioCtx?.state === "suspended") {
-        await this.audioCtx.resume();
+        this.audioCtx.resume();
       }
 this.x.push(["playafter: "+key, this.audioCtx.currentTime])
 
