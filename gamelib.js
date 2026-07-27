@@ -23,15 +23,10 @@ const play = async ({ url, logging, debug, playerId }) => {
     return { x, y };
   };
 
-  let firstPointerDown = true;
-
   window.addEventListener("click", (e) => {
-    if (firstPointerDown) {
-      audioManager.audioCtx = new window.AudioContext();
-      audioManager.play({ key: "__dummy__" });
-      firstPointerDown = false;
-    }
-  });
+    audioManager.audioCtx = new window.AudioContext();
+    audioManager.play({ key: "flap" });
+  }, { once: true });
 
   window.addEventListener("pointerdown", (e) => {
     touches[e.pointerId] = {};
