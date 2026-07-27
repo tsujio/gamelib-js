@@ -12,7 +12,14 @@ const play = async ({ url, logging, debug, playerId }) => {
   const workerUrl = "./playjs-worker.js?url=" + window.encodeURIComponent(url);
   const worker = new Worker(workerUrl, { type: "module" });
 
-  const touches = {};
+  window.addEventListener(
+    "click",
+    () => {
+      // Hack for mobile browsers: activate audio context on first user input
+      audioManager.play({ key: "__dummy__" });
+    },
+    { once: true },
+  );
 
   const toCanvasCoords = ({ clientX, clientY }) => {
     const rect = canvas.getBoundingClientRect();
@@ -23,9 +30,7 @@ const play = async ({ url, logging, debug, playerId }) => {
     return { x, y };
   };
 
-  window.addEventListener("click", (e) => {
-    audioManager.play({ key: "__dummy__" });
-  }, { once: true });
+  const touches = {};
 
   window.addEventListener("pointerdown", (e) => {
     touches[e.pointerId] = {};
@@ -62,29 +67,7 @@ const play = async ({ url, logging, debug, playerId }) => {
   worker.onmessage = (e) => {
     switch (e.data.type) {
       case "ready":
-        const { screen } = e.data;
-        const resize = () => {
-          const windowWidth = window.visualViewport?.width ?? window.innerWidth;
-          const windowHeight = window.visualViewport?.height ?? window.innerHeight;
-          if (windowHeight / windowWidth < screen.height / screen.width) {
-            canvas.style.width = (windowHeight / screen.height) * screen.width + "px";
-          } else {
-            canvas.style.width = "100%";
-          }
-        };
-        window.addEventListener("resize", resize);
-        resize();
-
-        worker.postMessage(
-          {
-            type: "play",
-            canvas: offscreen,
-            logging,
-            debug,
-            playerId,
-          },
-          [offscreen],
-        );
+        onReady(e.data);
         break;
       case "loadAudio":
         audioManager.register(e.data);
@@ -101,13 +84,40 @@ const play = async ({ url, logging, debug, playerId }) => {
   worker.onerror = (e) => {
     console.error("Error on worker", e);
   };
+
+  const onReady = ({ screen }) => {
+    const resize = () => {
+      const windowWidth = window.visualViewport?.width ?? window.innerWidth;
+      const windowHeight = window.visualViewport?.height ?? window.innerHeight;
+      if (windowHeight / windowWidth < screen.height / screen.width) {
+        canvas.style.width = (windowHeight / screen.height) * screen.width + "px";
+      } else {
+        canvas.style.width = "100%";
+      }
+    };
+
+    window.addEventListener("resize", resize);
+
+    resize();
+
+    worker.postMessage(
+      {
+        type: "play",
+        canvas: offscreen,
+        logging,
+        debug,
+        playerId,
+      },
+      [offscreen],
+    );
+  };
 };
 
 //////////////////////////////////////////////////////////////////////////////
 // Worker Thread
 //////////////////////////////////////////////////////////////////////////////
 
-const register = ({ game, audios, font, image, key }) => {
+const register = ({ game, resourceBaseUrl, audios, font, image, key }) => {
   self.onmessage = (e) => {
     switch (e.data.type) {
       case "play":
@@ -129,17 +139,20 @@ const register = ({ game, audios, font, image, key }) => {
     canvas.width = game.screen.width;
     canvas.height = game.screen.height;
 
-    await loadAudio(audios);
-    await loadFont(font);
-    await loadImage(image);
+    await loadAudio(audios, resourceBaseUrl);
+    await loadFont(font, resourceBaseUrl);
+    await loadImage(image, resourceBaseUrl);
     await server.init(key, logging, debug);
 
     const loop = (timestamp) => {
-      tpsManager.tick(timestamp);
+      const updateCount = tpsManager.getRequiredUpdateCount(timestamp);
+      for (let i = 0; i < updateCount; i++) {
+        tpsManager.tick(timestamp);
 
-      touchManager.update();
+        touchManager.update();
 
-      game.update();
+        game.update();
+      }
 
       game.draw(canvas);
 
@@ -164,13 +177,40 @@ const tpsManager = {
 
   tick(timestamp) {
     this.timestamps[this.index] = timestamp;
-    this.index = (this.index + 1) % this.timestamps.length;
+    this.index = this.getOffsetIndex(1);
+  },
+
+  getOffsetIndex(offset) {
+    return (this.index + offset + this.timestamps.length) % this.timestamps.length;
   },
 
   tps() {
-    const t = this.timestamps[(this.index - 1 + this.timestamps.length) % this.timestamps.length];
-    const s = this.timestamps[this.index];
-    return s === undefined ? undefined : ((this.timestamps.length - 1) / (t - s)) * 1000;
+    const latest = this.timestamps[this.getOffsetIndex(-1)];
+    const oldest = this.timestamps[this.index];
+    if (latest === undefined) {
+      return 0;
+    } else if (oldest === undefined) {
+      return ((this.index - 1) / (latest - this.timestamps[0] + 1e-10)) * 1000;
+    } else {
+      return ((this.timestamps.length - 1) / (latest - oldest + 1e-10)) * 1000;
+    }
+  },
+
+  mspt: 1000 / 60,
+  lastUpdateTimestamp: null,
+
+  getRequiredUpdateCount(timestamp) {
+    if (this.lastUpdateTimestamp === null) {
+      this.lastUpdateTimestamp = timestamp;
+      return 1;
+    }
+
+    const elapsed = timestamp - this.lastUpdateTimestamp;
+    const count = Math.floor(elapsed / this.mspt);
+    if (count > 0) {
+      this.lastUpdateTimestamp += this.mspt * count;
+    }
+    return count;
   },
 };
 
@@ -312,8 +352,8 @@ const allTouchesEnded = (touches) => {
 // Font
 //////////////////////////////////////////////////////////////////////////////
 
-const loadFont = async (url, fontFamily = "GameFont") => {
-  const fontFace = new FontFace(fontFamily, `url(${url})`);
+const loadFont = async (url, resourceBaseUrl, fontFamily = "GameFont") => {
+  const fontFace = new FontFace(fontFamily, `url(${new URL(url, resourceBaseUrl)})`);
   self.fonts.add(fontFace);
   await fontFace.load();
 };
@@ -322,9 +362,9 @@ const loadFont = async (url, fontFamily = "GameFont") => {
 // Audio
 //////////////////////////////////////////////////////////////////////////////
 
-const loadAudio = async (audios) => {
+const loadAudio = async (audios, resourceBaseUrl) => {
   const promises = Object.entries(audios).map(async ([key, url]) => {
-    const res = await fetch(url);
+    const res = await fetch(new URL(url, resourceBaseUrl));
     return [key, await res.arrayBuffer()];
   });
   const bufs = await Promise.all(promises);
@@ -357,15 +397,11 @@ const audioManager = {
     this.audioBuffers["__dummy__"] = this.audioCtx.createBuffer(1, 1, 22050);
   },
 
-  async resumeAudioContext() {
-    if (this.audioCtx?.state === "suspended") {
-      await this.audioCtx.resume();
-    }
-  },
-
   play({ key, loop }) {
     if (key in this.audioBuffers) {
-      this.resumeAudioContext();
+      if (this.audioCtx.state === "suspended") {
+        this.audioCtx.resume();
+      }
 
       const source = this.audioCtx.createBufferSource();
       source.buffer = this.audioBuffers[key];
@@ -407,8 +443,8 @@ const stopAudio = (key) => {
 
 let imageBitmap;
 
-const loadImage = async (url) => {
-  const res = await fetch(url);
+const loadImage = async (url, resourceBaseUrl) => {
+  const res = await fetch(new URL(url, resourceBaseUrl));
   const blob = await res.blob();
   imageBitmap = await self.createImageBitmap(blob);
 };
@@ -506,18 +542,11 @@ const drawTps = (ctx, opts = {}) => {
 // PRNG
 //////////////////////////////////////////////////////////////////////////////
 
-function Random(seed) {
-  if (typeof seed === "string") {
-    seed = seed
-      .split("")
-      .map((c) => c.charCodeAt(0))
-      .reduce((a, b) => a + b);
-  }
-
-  this.x = 123456789;
-  this.y = 362436069;
-  this.z = 521288629;
-  this.w = seed;
+function Xorshift128(x, y, z, w) {
+  this.x = x;
+  this.y = y;
+  this.z = z;
+  this.w = w;
 
   this.next = function () {
     let t = this.x ^ (this.x << 11);
@@ -550,6 +579,39 @@ function Random(seed) {
 
     return z0 * sigma + mu;
   };
+}
+
+function SplitMix64(seed) {
+  this.state = BigInt(seed) & 0xffffffffffffffffn;
+
+  this.next = function () {
+    this.state = (this.state + 0x9e3779b97f4a7c15n) & 0xffffffffffffffffn;
+    let z = this.state;
+    z = (z ^ (z >> 30n)) * 0xbf58476d1ce4e5b9n;
+    z &= 0xffffffffffffffffn;
+    z = (z ^ (z >> 27n)) * 0x94d049bb133111ebn;
+    z &= 0xffffffffffffffffn;
+    const r = (z ^ (z >> 31n)) & 0xffffffffffffffffn;
+
+    return Number(r) / Math.pow(2, 64);
+  };
+}
+
+function Random(seed) {
+  if (typeof seed === "string") {
+    seed = seed
+      .split("")
+      .map((c) => c.charCodeAt(0))
+      .reduce((a, b) => a + b);
+  }
+
+  const r = new SplitMix64(seed);
+  const x = Math.floor(r.next() * Number.MAX_SAFE_INTEGER);
+  const y = Math.floor(r.next() * Number.MAX_SAFE_INTEGER);
+  const z = Math.floor(r.next() * Number.MAX_SAFE_INTEGER);
+  const w = Math.floor(r.next() * Number.MAX_SAFE_INTEGER);
+
+  return new Xorshift128(x, y, z, w);
 }
 
 //////////////////////////////////////////////////////////////////////////////
@@ -805,13 +867,15 @@ function Game({ title, screen, GamePlay, drawMode }) {
   this.drawRanking = function (ctx, { backgroundColor, textColor }) {
     ctx.save();
     ctx.fillStyle = backgroundColor;
-    ctx.fillRect(10, 10, screen.width - 10 * 2, screen.height - 10 * 2);
+    ctx.fillRect(60, 30, screen.width - 60 * 2, screen.height - 30 * 2);
     ctx.restore();
+
+    drawText(ctx, { text: "RANKING", x: screen.width / 2, y: 50, size: 32, color: textColor, align: "center" });
 
     const ranking = this.ranking.slice(0, 10);
     const rankIn = ranking.some((r) => r.player_id === this.playerId);
     const text = "   SCORE    DATE   " + (rankIn ? "     " : "");
-    drawText(ctx, { text, x: screen.width / 2, y: 72 - 28, size: 18, color: textColor, align: "center" });
+    drawText(ctx, { text, x: screen.width / 2, y: 110, size: 16, color: textColor, align: "center" });
     ranking.forEach((r, i) => {
       const rank = ranking.slice(0, i).filter((rnk) => rnk.score > r.score).length + 1;
       const ts = new Date(r.timestamp)
@@ -830,7 +894,7 @@ function Game({ title, screen, GamePlay, drawMode }) {
           text += "     ";
         }
       }
-      drawText(ctx, { text, x: screen.width / 2, y: 72 + 28 * i, size: 18, color: textColor, align: "center" });
+      drawText(ctx, { text, x: screen.width / 2, y: 140 + 30 * i, size: 18, color: textColor, align: "center" });
     });
   };
 }
