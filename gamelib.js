@@ -24,8 +24,7 @@ const play = async ({ url, logging, debug, playerId }) => {
   };
 
   window.addEventListener("click", (e) => {
-    audioManager.audioCtx = new window.AudioContext();
-    audioManager.play({ key: "flap" });
+    audioManager.play({ key: "__dummy__" });
   }, { once: true });
 
   window.addEventListener("pointerdown", (e) => {
