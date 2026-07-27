@@ -23,16 +23,9 @@ const play = async ({ url, logging, debug, playerId }) => {
     return { x, y };
   };
 
-  let firstPointerDown = true
+  window.addEventListener("pointerdown", (e) => {
+    audioManager.resumeAudioContext();
 
-  window.addEventListener("click", (e) => {
-    if (firstPointerDown) {
-      audioManager.audioCtx = new window.AudioContext();
-      audioManager.resumeAudioContext();
-      audioManager.play({ key: "__dummy__" });
-      firstPointerDown = false
-    }
-audioManager.x.push(["pointerdown", audioManager.audioCtx.currentTime])
     touches[e.pointerId] = {};
     worker.postMessage({
       type: "pointerdown",
@@ -47,7 +40,6 @@ audioManager.x.push(["pointerdown", audioManager.audioCtx.currentTime])
         type: "pointermove",
         pointerId: e.pointerId,
         ...toCanvasCoords(e),
-        a: audioManager.x,
       });
     }
   });
@@ -216,7 +208,7 @@ function Touch(id, x, y) {
     return this.endedTicks === null;
   };
 }
-let xx = []
+
 const touchManager = {
   touches: new Map(),
 
@@ -224,12 +216,11 @@ const touchManager = {
     this.touches.set(pointerId, new Touch(pointerId, x, y));
   },
 
-  onPointerMove({ pointerId, x, y, a }) {
+  onPointerMove({ pointerId, x, y }) {
     if (this.touches.has(pointerId)) {
       const touch = this.touches.get(pointerId);
       touch.x = x;
       touch.y = y;
-      xx = a
     }
   },
 
@@ -347,7 +338,6 @@ const loadAudio = async (audios) => {
 };
 
 const audioManager = {
-x:[],
   audioCtx: null,
   audioBuffers: {},
   loopingSource: null,
@@ -361,8 +351,6 @@ x:[],
     });
     const bufs = await Promise.all(promises);
     this.audioBuffers = Object.fromEntries(bufs);
-
-    this.audioBuffers["__dummy__"] = this.audioCtx.createBuffer(1, 1, 22050);
   },
 
   async resumeAudioContext() {
@@ -371,13 +359,9 @@ x:[],
     }
   },
 
-  async play({ key, loop }) {
+  play({ key, loop }) {
     if (key in this.audioBuffers) {
-this.x.push(["play: "+key, this.audioCtx.currentTime])
-      if (this.audioCtx?.state === "suspended") {
-        this.audioCtx.resume();
-      }
-this.x.push(["playafter: "+key, this.audioCtx.currentTime])
+      this.resumeAudioContext();
 
       const source = this.audioCtx.createBufferSource();
       source.buffer = this.audioBuffers[key];
@@ -809,7 +793,6 @@ function Game({ title, screen, GamePlay, drawMode }) {
         break;
     }
 
-xx.forEach(([t, s], i) => { drawText(ctx, {text: `${s} ${t}`, x: 10, y: 20+10*i, size: 12, color: "red"}) })
     if (this.debug) {
       drawTps(ctx, { color: "white" });
     }
