@@ -117,7 +117,7 @@ const play = async ({ url, logging, debug, playerId }) => {
 // Worker Thread
 //////////////////////////////////////////////////////////////////////////////
 
-const register = ({ game, resourceBaseUrl, audios, font, image, key }) => {
+const register = ({ game, resources: { baseUrl: resourceBaseUrl, audios, font, image }, key }) => {
   self.onmessage = (e) => {
     switch (e.data.type) {
       case "play":
