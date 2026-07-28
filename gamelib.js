@@ -2,7 +2,7 @@
 // Main Thread
 //////////////////////////////////////////////////////////////////////////////
 
-const play = async ({ url, logging, debug, playerId }) => {
+const play = async ({ url, logging, debug }) => {
   const canvas = document.createElement("canvas");
   canvas.style.width = "100%";
   canvas.style.touchAction = "none";
@@ -78,6 +78,9 @@ const play = async ({ url, logging, debug, playerId }) => {
       case "stopAudio":
         audioManager.stop(e.data);
         break;
+      case "highestScore":
+        window.localStorage.setItem(`HIGHEST_SCORE__${e.data.title}`, e.data.score);
+        break;
     }
   };
 
@@ -85,7 +88,20 @@ const play = async ({ url, logging, debug, playerId }) => {
     console.error("Error on worker", e);
   };
 
-  const onReady = ({ screen }) => {
+  let playerId = window.localStorage.getItem("PLAYER_ID");
+  if (!playerId) {
+    playerId = crypto.randomUUID();
+    window.localStorage.setItem("PLAYER_ID", playerId);
+  }
+
+  const onReady = ({ title, screen }) => {
+    let highestScore = window.localStorage.getItem(`HIGHEST_SCORE__${title}`);
+    if (highestScore === null || highestScore === undefined || highestScore === "" || isNaN(Number(highestScore))) {
+      highestScore = null;
+    } else {
+      highestScore = Number(highestScore);
+    }
+
     const resize = () => {
       const windowWidth = window.visualViewport?.width ?? window.innerWidth;
       const windowHeight = window.visualViewport?.height ?? window.innerHeight;
@@ -107,6 +123,7 @@ const play = async ({ url, logging, debug, playerId }) => {
         logging,
         debug,
         playerId,
+        highestScore,
       },
       [offscreen],
     );
@@ -135,7 +152,7 @@ const register = ({ game, resources: { baseUrl: resourceBaseUrl, audios, font, i
     }
   };
 
-  const startLoop = async ({ canvas, logging, debug, playerId }) => {
+  const startLoop = async ({ canvas, logging, debug, playerId, highestScore }) => {
     canvas.width = game.screen.width;
     canvas.height = game.screen.height;
 
@@ -159,12 +176,12 @@ const register = ({ game, resources: { baseUrl: resourceBaseUrl, audios, font, i
       requestAnimationFrame(loop);
     };
 
-    game.onGameStart(playerId, debug);
+    game.onGameStart({ playerId, highestScore, debug });
 
     requestAnimationFrame(loop);
   };
 
-  self.postMessage({ type: "ready", screen: game.screen });
+  self.postMessage({ type: "ready", title: game.title, screen: game.screen });
 };
 
 //////////////////////////////////////////////////////////////////////////////
@@ -746,8 +763,9 @@ function Game({ title, screen, GamePlay, drawMode }) {
   this.title = title;
   this.screen = screen;
 
-  this.onGameStart = function (playerId, debug) {
+  this.onGameStart = function ({ playerId, highestScore, debug }) {
     this.playerId = playerId;
+    this.highestScore = highestScore;
     this.debug = debug;
     this.sessionId = self.crypto.randomUUID();
     this.startNewPlay();
@@ -806,6 +824,15 @@ function Game({ title, screen, GamePlay, drawMode }) {
             .catch(() => {
               this.ranking = null;
             });
+
+          if ((this.highestScore ?? -Infinity) < this.gamePlay.score) {
+            this.highestScore = this.gamePlay.score;
+            self.postMessage({
+              type: "highestScore",
+              title: this.title,
+              score: this.highestScore,
+            });
+          }
         }
 
         break;
@@ -864,6 +891,14 @@ function Game({ title, screen, GamePlay, drawMode }) {
     }
   };
 
+  this.drawScore = function (ctx, { color }) {
+    let text = `SCORE ${this.gamePlay.score}`;
+    if (this.highestScore !== null) {
+      text += ` HIGH ${this.highestScore}`;
+    }
+    drawText(ctx, { text, x: screen.width, y: 0, size: 16, align: "right", color });
+  };
+
   this.drawRanking = function (ctx, { backgroundColor, textColor }) {
     ctx.save();
     ctx.fillStyle = backgroundColor;
@@ -875,7 +910,7 @@ function Game({ title, screen, GamePlay, drawMode }) {
     const ranking = this.ranking.slice(0, 10);
     const rankIn = ranking.some((r) => r.player_id === this.playerId);
     const text = "   SCORE    DATE   " + (rankIn ? "     " : "");
-    drawText(ctx, { text, x: screen.width / 2, y: 110, size: 16, color: textColor, align: "center" });
+    drawText(ctx, { text, x: screen.width / 2, y: 110, size: 18, color: textColor, align: "center" });
     ranking.forEach((r, i) => {
       const rank = ranking.slice(0, i).filter((rnk) => rnk.score > r.score).length + 1;
       const ts = new Date(r.timestamp)
@@ -894,7 +929,7 @@ function Game({ title, screen, GamePlay, drawMode }) {
           text += "     ";
         }
       }
-      drawText(ctx, { text, x: screen.width / 2, y: 140 + 30 * i, size: 18, color: textColor, align: "center" });
+      drawText(ctx, { text, x: screen.width / 2, y: 145 + 30 * i, size: 18, color: textColor, align: "center" });
     });
   };
 }
