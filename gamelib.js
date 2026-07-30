@@ -12,58 +12,6 @@ const play = async ({ url, logging, debug }) => {
   const workerUrl = "./playjs-worker.js?url=" + window.encodeURIComponent(url);
   const worker = new Worker(workerUrl, { type: "module" });
 
-  window.addEventListener(
-    "click",
-    () => {
-      // Hack for mobile browsers: activate audio context on first user input
-      audioManager.play({ key: "__dummy__" });
-    },
-    { once: true },
-  );
-
-  const toCanvasCoords = ({ clientX, clientY }) => {
-    const rect = canvas.getBoundingClientRect();
-    const cssX = clientX - rect.left;
-    const cssY = clientY - rect.top;
-    const x = cssX * (canvas.width / rect.width);
-    const y = cssY * (canvas.height / rect.height);
-    return { x, y };
-  };
-
-  const touches = {};
-
-  window.addEventListener("pointerdown", (e) => {
-    touches[e.pointerId] = {};
-    worker.postMessage({
-      type: "pointerdown",
-      pointerId: e.pointerId,
-      ...toCanvasCoords(e),
-    });
-  });
-
-  window.addEventListener("pointermove", (e) => {
-    if (touches[e.pointerId]) {
-      worker.postMessage({
-        type: "pointermove",
-        pointerId: e.pointerId,
-        ...toCanvasCoords(e),
-      });
-    }
-  });
-
-  const onpointerup = (e) => {
-    if (touches[e.pointerId]) {
-      delete touches[e.pointerId];
-      worker.postMessage({
-        type: "pointerup",
-        pointerId: e.pointerId,
-      });
-    }
-  };
-
-  window.addEventListener("pointerup", onpointerup);
-  window.addEventListener("pointercancel", onpointerup);
-
   worker.onmessage = (e) => {
     switch (e.data.type) {
       case "ready":
@@ -88,19 +36,8 @@ const play = async ({ url, logging, debug }) => {
     console.error("Error on worker", e);
   };
 
-  let playerId = window.localStorage.getItem("PLAYER_ID");
-  if (!playerId) {
-    playerId = crypto.randomUUID();
-    window.localStorage.setItem("PLAYER_ID", playerId);
-  }
-
   const onReady = ({ title, screen }) => {
-    let highestScore = window.localStorage.getItem(`HIGHEST_SCORE__${title}`);
-    if (highestScore === null || highestScore === undefined || highestScore === "" || isNaN(Number(highestScore))) {
-      highestScore = null;
-    } else {
-      highestScore = Number(highestScore);
-    }
+    const { playerId, highestScore } = loadFromLocalStorage(title);
 
     const resize = () => {
       const windowWidth = window.visualViewport?.width ?? window.innerWidth;
@@ -116,6 +53,8 @@ const play = async ({ url, logging, debug }) => {
 
     resize();
 
+    addUserInputListeners(worker, canvas);
+
     worker.postMessage(
       {
         type: "play",
@@ -128,6 +67,99 @@ const play = async ({ url, logging, debug }) => {
       [offscreen],
     );
   };
+};
+
+const loadFromLocalStorage = (title) => {
+  let playerId = window.localStorage.getItem("PLAYER_ID");
+  if (!playerId) {
+    playerId = crypto.randomUUID();
+    window.localStorage.setItem("PLAYER_ID", playerId);
+  }
+
+  let highestScore = window.localStorage.getItem(`HIGHEST_SCORE__${title}`);
+  if (highestScore === null || highestScore === undefined || highestScore === "" || isNaN(Number(highestScore))) {
+    highestScore = null;
+  } else {
+    highestScore = Number(highestScore);
+  }
+
+  return { playerId, highestScore };
+};
+
+const addUserInputListeners = (worker, canvas) => {
+  window.addEventListener(
+    "click",
+    () => {
+      // Hack for mobile browsers: activate audio context on first user input
+      audioManager.play({ key: "__dummy__" });
+    },
+    { once: true },
+  );
+
+  const toCanvasCoords = ({ clientX, clientY }) => {
+    const rect = canvas.getBoundingClientRect();
+    const cssX = clientX - rect.left;
+    const cssY = clientY - rect.top;
+    const x = cssX * (canvas.width / rect.width);
+    const y = cssY * (canvas.height / rect.height);
+    return { x, y };
+  };
+
+  const touches = {};
+
+  const onpointerdown = (e) => {
+    touches[e.pointerId] = {};
+    worker.postMessage({
+      type: "pointerdown",
+      pointerId: e.pointerId,
+      ...toCanvasCoords(e),
+    });
+  };
+
+  window.addEventListener("pointerdown", onpointerdown);
+  window.addEventListener("keydown", (e) => {
+    if (e.code === "Space") {
+      if (!("space" in touches)) {
+        onpointerdown({ pointerId: "space", clientX: 0, clientY: 0 });
+      }
+      e.preventDefault();
+    }
+  });
+
+  window.addEventListener("pointermove", (e) => {
+    if (touches[e.pointerId]) {
+      worker.postMessage({
+        type: "pointermove",
+        pointerId: e.pointerId,
+        ...toCanvasCoords(e),
+      });
+    }
+  });
+
+  const onpointerup = (e) => {
+    if (touches[e.pointerId]) {
+      delete touches[e.pointerId];
+      worker.postMessage({
+        type: "pointerup",
+        pointerId: e.pointerId,
+      });
+    }
+  };
+
+  window.addEventListener("pointerup", onpointerup);
+  window.addEventListener("pointercancel", onpointerup);
+  window.addEventListener("keyup", (e) => {
+    if (e.code === "Space") {
+      onpointerup({ pointerId: "space" });
+    }
+  });
+
+  try {
+    // Hack for iframe: detect key events
+    window.focus();
+  } catch (err) {
+    console.error("Failed to focus on window", err);
+  }
 };
 
 //////////////////////////////////////////////////////////////////////////////
@@ -814,6 +846,7 @@ function Game({ title, screen, GamePlay, drawMode }) {
         if (this.gamePlay.gameOver) {
           this.mode = MODE_GAME_OVER;
           this.modeTicks = 0;
+
           server.sendLog(this, "game_over", { score: this.gamePlay.score });
           server
             .registerScore(this, this.gamePlay.score)
@@ -929,7 +962,9 @@ function Game({ title, screen, GamePlay, drawMode }) {
           text += "     ";
         }
       }
-      drawText(ctx, { text, x: screen.width / 2, y: 145 + 30 * i, size: 18, color: textColor, align: "center" });
+      const size = 18;
+      const x = screen.width / 2 - (size / 2) * Math.floor(Math.log10(rank));
+      drawText(ctx, { text, x, y: 145 + 30 * i, size, color: textColor, align: "center" });
     });
   };
 }
