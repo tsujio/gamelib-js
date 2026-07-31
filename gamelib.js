@@ -39,19 +39,7 @@ const play = async ({ url, logging, debug }) => {
   const onReady = ({ title, screen }) => {
     const { playerId, highestScore } = loadFromLocalStorage(title);
 
-    const resize = () => {
-      const windowWidth = window.visualViewport?.width ?? window.innerWidth;
-      const windowHeight = window.visualViewport?.height ?? window.innerHeight;
-      if (windowHeight / windowWidth < screen.height / screen.width) {
-        canvas.style.width = (windowHeight / screen.height) * screen.width + "px";
-      } else {
-        canvas.style.width = "100%";
-      }
-    };
-
-    window.addEventListener("resize", resize);
-
-    resize();
+    adaptCanvasSizeToWindow(canvas, screen);
 
     addUserInputListeners(worker, canvas);
 
@@ -84,6 +72,22 @@ const loadFromLocalStorage = (title) => {
   }
 
   return { playerId, highestScore };
+};
+
+const adaptCanvasSizeToWindow = (canvas, screen) => {
+  const resize = () => {
+    const windowWidth = window.visualViewport?.width ?? window.innerWidth;
+    const windowHeight = window.visualViewport?.height ?? window.innerHeight;
+    if (windowHeight / windowWidth < screen.height / screen.width) {
+      canvas.style.width = (windowHeight / screen.height) * screen.width + "px";
+    } else {
+      canvas.style.width = "100%";
+    }
+  };
+
+  window.addEventListener("resize", resize);
+
+  resize();
 };
 
 const addUserInputListeners = (worker, canvas) => {
@@ -411,23 +415,6 @@ const loadFont = async (url, resourceBaseUrl, fontFamily = "GameFont") => {
 // Audio
 //////////////////////////////////////////////////////////////////////////////
 
-const loadAudio = async (audios, resourceBaseUrl) => {
-  const promises = Object.entries(audios).map(async ([key, url]) => {
-    const res = await fetch(new URL(url, resourceBaseUrl));
-    return [key, await res.arrayBuffer()];
-  });
-  const bufs = await Promise.all(promises);
-  const arrayBuffers = Object.fromEntries(bufs);
-
-  self.postMessage(
-    {
-      type: "loadAudio",
-      arrayBuffers,
-    },
-    Object.values(arrayBuffers),
-  );
-};
-
 const audioManager = {
   audioCtx: null,
   audioBuffers: {},
@@ -446,7 +433,7 @@ const audioManager = {
     this.audioBuffers["__dummy__"] = this.audioCtx.createBuffer(1, 1, 22050);
   },
 
-  play({ key, loop }) {
+  play({ key, loop, gain }) {
     if (key in this.audioBuffers) {
       if (this.audioCtx.state === "suspended") {
         this.audioCtx.resume();
@@ -456,9 +443,19 @@ const audioManager = {
       source.buffer = this.audioBuffers[key];
       if (loop) {
         source.loop = true;
+        if (typeof loop === "object") {
+          source.loopStart = loop.start ?? 0;
+          source.loopEnd = loop.end ?? 0;
+        }
         this.loopingSource = source;
       }
-      source.connect(this.audioCtx.destination);
+
+      const gainNode = this.audioCtx.createGain();
+      gainNode.gain.value = gain ?? 1;
+
+      source.connect(gainNode);
+      gainNode.connect(this.audioCtx.destination);
+
       source.start(this.audioCtx.currentTime + 0.02);
     }
   },
@@ -471,11 +468,29 @@ const audioManager = {
   },
 };
 
-const playAudio = (key, { loop } = {}) => {
+const loadAudio = async (audios, resourceBaseUrl) => {
+  const promises = Object.entries(audios).map(async ([key, url]) => {
+    const res = await fetch(new URL(url, resourceBaseUrl));
+    return [key, await res.arrayBuffer()];
+  });
+  const bufs = await Promise.all(promises);
+  const arrayBuffers = Object.fromEntries(bufs);
+
+  self.postMessage(
+    {
+      type: "loadAudio",
+      arrayBuffers,
+    },
+    Object.values(arrayBuffers),
+  );
+};
+
+const playAudio = (key, { loop, gain } = {}) => {
   self.postMessage({
     type: "playAudio",
     key,
     loop,
+    gain,
   });
 };
 
@@ -786,7 +801,7 @@ const server = {
 // Game Template
 //////////////////////////////////////////////////////////////////////////////
 
-function Game({ title, screen, GamePlay, drawMode }) {
+function Game({ title, screen, GamePlay, drawMode, bgm }) {
   const MODE_TITLE = 1;
   const MODE_PLAYING = 2;
   const MODE_GAME_OVER = 3;
@@ -834,7 +849,7 @@ function Game({ title, screen, GamePlay, drawMode }) {
           this.mode = MODE_PLAYING;
           this.modeTicks = 0;
           playAudio("gameStart");
-          playAudio("bgm", { loop: true });
+          playAudio("bgm", bgm ?? { loop: true });
           server.sendLog(this, "start_game");
         }
 
