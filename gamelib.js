@@ -2,15 +2,18 @@
 // Main Thread
 //////////////////////////////////////////////////////////////////////////////
 
-const play = async ({ url, logging, debug }) => {
+const play = async ({ url, logging, debug, onReady: onReadyCallback }) => {
   const canvas = document.createElement("canvas");
   canvas.style.width = "100%";
   canvas.style.touchAction = "none";
+  canvas.style.display = "none";
   document.body.appendChild(canvas);
   const offscreen = canvas.transferControlToOffscreen();
 
   const workerUrl = "./playjs-worker.js?url=" + window.encodeURIComponent(url);
   const worker = new Worker(workerUrl, { type: "module" });
+
+  let audioRegisteredPromise;
 
   worker.onmessage = (e) => {
     switch (e.data.type) {
@@ -18,7 +21,7 @@ const play = async ({ url, logging, debug }) => {
         onReady(e.data);
         break;
       case "loadAudio":
-        audioManager.register(e.data);
+        audioRegisteredPromise = audioManager.register(e.data);
         break;
       case "playAudio":
         audioManager.play(e.data);
@@ -36,12 +39,21 @@ const play = async ({ url, logging, debug }) => {
     console.error("Error on worker", e);
   };
 
-  const onReady = ({ title, screen }) => {
+  const onReady = async ({ title, screen }) => {
     const { playerId, highestScore } = loadFromLocalStorage(title);
 
     adaptCanvasSizeToWindow(canvas, screen);
 
+    await Promise.race([
+      audioRegisteredPromise,
+      new Promise((resolve) => setTimeout(resolve, 1000)), // Timeout
+    ]);
+
     addUserInputListeners(worker, canvas);
+
+    canvas.style.display = "block";
+
+    onReadyCallback();
 
     worker.postMessage(
       {
@@ -170,7 +182,7 @@ const addUserInputListeners = (worker, canvas) => {
 // Worker Thread
 //////////////////////////////////////////////////////////////////////////////
 
-const register = ({ game, resources: { baseUrl: resourceBaseUrl, audios, font, image }, key }) => {
+const register = async ({ game, resources: { baseUrl: resourceBaseUrl, audios, font, image }, key }) => {
   self.onmessage = (e) => {
     switch (e.data.type) {
       case "play":
@@ -192,9 +204,6 @@ const register = ({ game, resources: { baseUrl: resourceBaseUrl, audios, font, i
     canvas.width = game.screen.width;
     canvas.height = game.screen.height;
 
-    await loadAudio(audios, resourceBaseUrl);
-    await loadFont(font, resourceBaseUrl);
-    await loadImage(image, resourceBaseUrl);
     await server.init(key, logging, debug);
 
     const loop = (timestamp) => {
@@ -216,6 +225,10 @@ const register = ({ game, resources: { baseUrl: resourceBaseUrl, audios, font, i
 
     requestAnimationFrame(loop);
   };
+
+  await loadAudio(audios, resourceBaseUrl);
+  await loadFont(font, resourceBaseUrl);
+  await loadImage(image, resourceBaseUrl);
 
   self.postMessage({ type: "ready", title: game.title, screen: game.screen });
 };
