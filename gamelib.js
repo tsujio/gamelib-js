@@ -226,9 +226,11 @@ const register = async ({ game, resources: { baseUrl: resourceBaseUrl, audios, f
     requestAnimationFrame(loop);
   };
 
-  await loadAudio(audios, resourceBaseUrl);
-  await loadFont(font, resourceBaseUrl);
-  await loadImage(image, resourceBaseUrl);
+  await Promise.all([
+    loadAudio(audios, resourceBaseUrl),
+    loadFont(font, resourceBaseUrl),
+    loadImage(image, resourceBaseUrl),
+  ]);
 
   self.postMessage({ type: "ready", title: game.title, screen: game.screen });
 };
@@ -436,14 +438,13 @@ const audioManager = {
   async register({ arrayBuffers }) {
     this.audioCtx = new window.AudioContext();
 
+    this.audioBuffers["__dummy__"] = this.audioCtx.createBuffer(1, 1, 22050);
+
     const promises = Object.entries(arrayBuffers).map(async ([key, buf]) => {
       const audioBuffer = await this.audioCtx.decodeAudioData(buf);
-      return [key, audioBuffer];
+      this.audioBuffers[key] = audioBuffer;
     });
-    const bufs = await Promise.all(promises);
-    this.audioBuffers = Object.fromEntries(bufs);
-
-    this.audioBuffers["__dummy__"] = this.audioCtx.createBuffer(1, 1, 22050);
+    await Promise.all(promises);
   },
 
   play({ key, loop, gain }) {
