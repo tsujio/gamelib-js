@@ -888,11 +888,10 @@ function Game({ title, screen, GamePlay, drawMode, bgm }) {
             });
 
           if ((this.highestScore ?? -Infinity) < this.gamePlay.score) {
-            this.highestScore = this.gamePlay.score;
             self.postMessage({
               type: "highestScore",
               title: this.title,
-              score: this.highestScore,
+              score: this.gamePlay.score,
             });
           }
         }
@@ -906,6 +905,7 @@ function Game({ title, screen, GamePlay, drawMode, bgm }) {
             this.modeTicks = 0;
             playAudio("ranking");
           } else {
+            this.highestScore = this.gamePlay.score;
             stopAudio("bgm");
             this.startNewPlay();
           }
@@ -915,6 +915,7 @@ function Game({ title, screen, GamePlay, drawMode, bgm }) {
 
       case MODE_RANKING:
         if (this.modeTicks > 60 && firstTouchStarted(touches)) {
+          this.highestScore = this.gamePlay.score;
           stopAudio("bgm");
           this.startNewPlay();
         }
@@ -956,7 +957,7 @@ function Game({ title, screen, GamePlay, drawMode, bgm }) {
   this.drawScore = function (ctx, { color }) {
     let text = `SCORE ${this.gamePlay.score}`;
     if (this.highestScore !== null) {
-      text += ` HIGH ${this.highestScore}`;
+      text += ` HI ${this.highestScore}`;
     }
     drawText(ctx, { text, x: screen.width, y: 0, size: 16, align: "right", color });
   };
